@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Payment Receipt</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          Helvetica, Arial, sans-serif;
+        background: #f3f4f6;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        color: #1f2937;
+      }
+      .receipt {
+        width: 100%;
+        max-width: 420px;
+        background: #ffffff;
+        border-radius: 4px;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12);
+        padding: 32px 28px;
+      }
+      .title {
+        text-align: center;
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: 2px;
+        margin-bottom: 24px;
+        color: #111827;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px dashed #d1d5db;
+      }
+      .row:last-child {
+        border-bottom: none;
+      }
+      .row span {
+        color: #6b7280;
+        font-size: 13px;
+      }
+      .row strong {
+        font-size: 13.5px;
+        color: #111827;
+        text-align: right;
+      }
+      .status-pill {
+        text-align: center;
+        margin: 18px 0;
+      }
+      .status-pill span {
+        display: inline-block;
+        background: #ecfdf5;
+        color: #047857;
+        border: 1px solid #a7f3d0;
+        font-weight: 700;
+        font-size: 13px;
+        padding: 6px 16px;
+        border-radius: 999px;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 24px;
+      }
+      .btn {
+        flex: 1;
+        text-align: center;
+        border: none;
+        padding: 13px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        text-decoration: none;
+        background: #0f766e;
+        color: #ffffff;
+      }
+      .btn.secondary {
+        background: #f3f4f6;
+        color: #374151;
+      }
+      .loading {
+        text-align: center;
+        color: #6b7280;
+        padding: 40px 0;
+      }
+      a.btn {
+        line-height: 1.2;
+      }
+      @media print {
+        body {
+          background: #ffffff;
+          padding: 0;
+        }
+        .receipt {
+          box-shadow: none;
+        }
+        .btn {
+          display: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="receipt">
+      <div class="title">PAYMENT RECEIPT</div>
+      <div id="loading" class="loading">Loading receipt...</div>
+
+      <div id="content" style="display: none">
+        <div class="row">
+          <span>Invoice Number</span>
+          <strong id="r-invoice">-</strong>
+        </div>
+        <div class="row">
+          <span>Amount</span>
+          <strong id="r-amount">-</strong>
+        </div>
+        <div class="row">
+          <span>Payment Method</span>
+          <strong>M-Pesa</strong>
+        </div>
+        <div class="row">
+          <span>Phone Number</span>
+          <strong id="r-phone">-</strong>
+        </div>
+        <div class="row">
+          <span>Status</span>
+          <strong id="r-status">-</strong>
+        </div>
+        <div class="row">
+          <span>Date</span>
+          <strong id="r-date">-</strong>
+        </div>
+        <div class="row">
+          <span>Payment Reference</span>
+          <strong id="r-reference">N/A</strong>
+        </div>
+        <div class="status-pill" style="display: none" id="paid-pill">
+          <span>PAID</span>
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="window.print()">Print Receipt</button>
+          <a class="btn secondary" href="/">Make Payment</a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var parts = window.location.pathname.split('/').filter(Boolean);
+        var invoice = parts[parts.length - 1];
+
+        function maskPhone(phone) {
+          var normalized = String(phone).replace(/\D/g, '');
+          if (normalized.length < 7) return '***';
+          return (
+            normalized.slice(0, 4) + '******' + normalized.slice(-3)
+          );
+        }
+
+        function formatDate(value) {
+          if (!value) return '-';
+          return new Date(value).toLocaleDateString('en-GB', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          });
+        }
+
+        fetch('/api/payments/' + encodeURIComponent(invoice))
+          .then(function (res) {
+            if (!res.ok) throw new Error('not found');
+            return res.json();
+          })
+          .then(function (data) {
+            if (data.status !== 'SUCCESS') {
+              window.location.replace('/');
+              return;
+            }
+            document.getElementById('r-invoice').textContent =
+              data.invoiceNumber;
+            document.getElementById('r-amount').textContent =
+              (data.currency || 'KES') + ' ' + data.amount.toLocaleString();
+            document.getElementById('r-phone').textContent = maskPhone(
+              data.phone,
+            );
+            document.getElementById('r-status').textContent =
+              data.status === 'SUCCESS' ? 'PAID' : data.status;
+            document.getElementById('r-date').textContent = formatDate(
+              data.completedAt,
+            );
+            document.getElementById('r-reference').textContent =
+              data.providerReference || 'N/A';
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('content').style.display = 'block';
+            document.getElementById('paid-pill').style.display = 'block';
+          })
+          .catch(function () {
+            document.getElementById('loading').textContent =
+              'Receipt could not be loaded.';
+          });
+      })();
+    </script>
+  </body>
+</html>

@@ -24,6 +24,18 @@ enum TransactionStatus {
   UNKNOWN
 }
 
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
+  EXPIRED
+}
+
+enum PaymentProvider {
+  CRADLE
+}
+
 model Manufacturer {
   id           String   @id @default(cuid())
   phoneNumber  String   @unique
@@ -82,4 +94,25 @@ model Ledger {
   settledAt     DateTime    @default(now())
 
   @@map("ledger")
+}
+
+model Payment {
+  id                String          @id @default(cuid())
+  invoiceNumber     String          @unique
+  externalId        String          @unique
+  merchantId        String
+  amount            Int
+  currency          String          @default("KES")
+  payerPhone        String
+  status            PaymentStatus   @default(PENDING)
+  provider          PaymentProvider @default(CRADLE)
+  providerReference String?
+  providerResponse  Json?
+  callbackResponse  Json?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  completedAt       DateTime?
+
+  @@index([status])
+  @@map("payments")
 }
