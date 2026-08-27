@@ -20,4 +20,9 @@ export class PaymentsController {
   callback(@Body() payload: unknown) {
     return this.payments.handleCradleCallback(payload);
   }
+
+  @Post('cradle/invoice-callback')
+  invoiceCallback(@Body() payload: unknown) {
+    return this.payments.handleInvoicePaymentCallback(payload);
+  }
 }

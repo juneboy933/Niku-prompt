@@ -6,7 +6,11 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { PaymentStatus } from '@prisma/client';
 import { CRADLE_PAYMENT_CONFIG } from 'src/config/cradle-payment.config';
+import { InvoiceService } from 'src/invoice/invoice.service';
+import { LedgerService } from 'src/ledger/ledger.service';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { SmsService } from 'src/sms/sms.service';
+import { TransactionService } from 'src/transaction/transaction.service';
 import { CradlePaymentService } from './cradle/cradle-payment.service';
 import { PaymentsService } from './payments.service';
 
@@ -28,9 +32,23 @@ describe('PaymentsService', () => {
       findFirst: jest.Mock;
       update: jest.Mock;
     };
+    transaction: {
+      findUnique: jest.Mock;
+    };
     $transaction: jest.Mock;
   };
   let cradle: { initiatePayment: jest.Mock };
+  let invoiceService: {
+    findInvoice: jest.Mock;
+    markPaymentPending: jest.Mock;
+  };
+  let ledgerService: { recordSettlement: jest.Mock };
+  let smsService: { sendSettlementConfirmation: jest.Mock };
+  let transactionService: {
+    createTransaction: jest.Mock;
+    markAsFailed: jest.Mock;
+    markAsPushed: jest.Mock;
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -42,18 +60,34 @@ describe('PaymentsService', () => {
         findFirst: jest.fn(),
         update: jest.fn(),
       },
-      $transaction: jest.fn((fn: (tx: unknown) => unknown) =>
-        fn(prisma),
-      ),
+      transaction: {
+        findUnique: jest.fn(),
+      },
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
     };
 
     cradle = { initiatePayment: jest.fn() };
+    invoiceService = {
+      findInvoice: jest.fn(),
+      markPaymentPending: jest.fn(),
+    };
+    ledgerService = { recordSettlement: jest.fn() };
+    smsService = { sendSettlementConfirmation: jest.fn() };
+    transactionService = {
+      createTransaction: jest.fn(),
+      markAsFailed: jest.fn(),
+      markAsPushed: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PaymentsService,
         { provide: PrismaService, useValue: prisma },
         { provide: CradlePaymentService, useValue: cradle },
+        { provide: InvoiceService, useValue: invoiceService },
+        { provide: LedgerService, useValue: ledgerService },
+        { provide: SmsService, useValue: smsService },
+        { provide: TransactionService, useValue: transactionService },
         { provide: CRADLE_PAYMENT_CONFIG, useValue: config },
       ],
     }).compile();
@@ -218,7 +252,9 @@ describe('PaymentsService', () => {
         payerPhone: '254712345678',
         status: PaymentStatus.PROCESSING,
       };
-      prisma.payment.findUnique.mockImplementation(async () => ({ ...current }));
+      prisma.payment.findUnique.mockImplementation(async () => ({
+        ...current,
+      }));
       prisma.payment.update.mockImplementation(
         async ({ data }: { data: Record<string, unknown> }) => {
           current = { ...current, ...data };
@@ -260,8 +296,9 @@ describe('PaymentsService', () => {
       });
 
       expect(prisma.payment.update).toHaveBeenCalledTimes(1);
-      const arg = prisma.payment.update.mock
-        .calls[0][0] as unknown as { data: Record<string, unknown> };
+      const arg = prisma.payment.update.mock.calls[0][0] as unknown as {
+        data: Record<string, unknown>;
+      };
       expect(arg.data.status).toBeUndefined();
       expect(current.status).toBe(PaymentStatus.SUCCESS);
     });
@@ -271,6 +308,109 @@ describe('PaymentsService', () => {
 
       expect(result).toEqual({ received: true, acknowledged: true });
       expect(prisma.payment.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('initiateInvoicePayment', () => {
+    beforeEach(() => {
+      invoiceService.findInvoice.mockResolvedValue({
+        id: 'invoice_1',
+        code: '1234',
+        amount: 250,
+        customerNumber: '0712345678',
+      });
+      transactionService.createTransaction.mockResolvedValue({
+        id: 'tx_1',
+        invoiceId: 'invoice_1',
+      });
+      cradle.initiatePayment.mockResolvedValue({
+        error: false,
+        reference: 'checkout_1',
+      });
+    });
+
+    it('creates a transaction, sends STK push and marks invoice payment pending', async () => {
+      const result = await service.initiateInvoicePayment('invoice_1');
+
+      expect(transactionService.createTransaction).toHaveBeenCalledWith(
+        'invoice_1',
+      );
+      expect(cradle.initiatePayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 250,
+          payerPhone: '254712345678',
+          externalId: 'tx_1',
+        }),
+      );
+      expect(transactionService.markAsPushed).toHaveBeenCalledWith(
+        'tx_1',
+        'checkout_1',
+        'checkout_1',
+      );
+      expect(invoiceService.markPaymentPending).toHaveBeenCalledWith(
+        'invoice_1',
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: true,
+          invoiceId: 'invoice_1',
+          transactionId: 'tx_1',
+        }),
+      );
+    });
+
+    it('marks the transaction failed when STK initiation fails', async () => {
+      cradle.initiatePayment.mockRejectedValue(
+        new ServiceUnavailableException('down'),
+      );
+
+      await expect(service.initiateInvoicePayment('invoice_1')).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+
+      expect(transactionService.markAsFailed).toHaveBeenCalledWith('tx_1');
+    });
+  });
+
+  describe('handleInvoicePaymentCallback', () => {
+    it('records settlement and sends SMS on success', async () => {
+      prisma.transaction.findUnique.mockResolvedValue({
+        id: 'tx_1',
+        invoiceId: 'invoice_1',
+        status: 'PUSHED',
+        invoice: { amount: 250 },
+      });
+
+      await service.handleInvoicePaymentCallback({
+        externalId: 'tx_1',
+        status: 'SUCCESS',
+        receipt: 'R123',
+      });
+
+      expect(ledgerService.recordSettlement).toHaveBeenCalledWith(
+        'tx_1',
+        'R123',
+        250,
+      );
+      expect(smsService.sendSettlementConfirmation).toHaveBeenCalledWith(
+        'invoice_1',
+      );
+    });
+
+    it('records a failed transaction on failure', async () => {
+      prisma.transaction.findUnique.mockResolvedValue({
+        id: 'tx_1',
+        invoiceId: 'invoice_1',
+        status: 'PUSHED',
+        invoice: { amount: 250 },
+      });
+
+      await service.handleInvoicePaymentCallback({
+        externalId: 'tx_1',
+        status: 'FAILED',
+      });
+
+      expect(transactionService.markAsFailed).toHaveBeenCalledWith('tx_1');
     });
   });
 });

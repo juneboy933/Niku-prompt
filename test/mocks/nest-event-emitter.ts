@@ -6,6 +6,10 @@ export class EventEmitter2 {
   }
 }
 
+export function OnEvent(): MethodDecorator {
+  return () => undefined;
+}
+
 @Module({})
 export class EventEmitterModule {
   static forRoot() {

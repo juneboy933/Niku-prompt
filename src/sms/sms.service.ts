@@ -24,11 +24,35 @@ export class SmsService {
     this.sms = at.SMS;
   }
 
+  private formatPhoneNumber(phone: string): string {
+    // Remove all non-numeric characters except leading +
+    let cleaned = phone.replace(/[^\d+]/g, '');
+
+    // Convert 0712345678 or 0112345678 -> +254712345678
+    if (cleaned.startsWith('0')) {
+      cleaned = '+254' + cleaned.substring(1);
+    }
+
+    // Convert 254712345678 -> +254712345678
+    if (cleaned.startsWith('254')) {
+      cleaned = '+' + cleaned;
+    }
+
+    // Ensure it starts with +
+    if (!cleaned.startsWith('+')) {
+      cleaned = '+' + cleaned;
+    }
+
+    return cleaned;
+  }
+
   // Low-level send — every outbound message goes through here
   async sendSms(to: string, message: string) {
     try {
-      const result = await this.sms.send({ to: [to], message });
+      const formattedPhone = this.formatPhoneNumber(to);
+      const result = await this.sms.send({ to: [formattedPhone], message });
       this.logger.log(`SMS sent to ${to}`);
+      console.log(result);
       return result;
     } catch (err) {
       // A failed SMS send shouldn't crash the caller's flow — log and move on.

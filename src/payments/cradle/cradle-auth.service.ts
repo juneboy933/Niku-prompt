@@ -5,9 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import axios from 'axios';
-import {
-  CRADLE_PAYMENT_CONFIG,
-} from 'src/config/cradle-payment.config';
+import { CRADLE_PAYMENT_CONFIG } from 'src/config/cradle-payment.config';
 import type { CradlePaymentConfig } from 'src/config/cradle-payment.config';
 import {
   CRADLE_AUTH_TIMEOUT_MS,

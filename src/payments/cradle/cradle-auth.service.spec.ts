@@ -100,7 +100,7 @@ describe('CradleAuthService', () => {
     await service.getValidAccessToken();
 
     // Force the cached token to expire in 30s (< 60s buffer).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     (service as any).expiresAt = Date.now() + 30 * 1000;
 
     await service.getValidAccessToken();

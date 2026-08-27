@@ -6,10 +6,19 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Payment, PaymentStatus, Prisma } from '@prisma/client';
+import { OnEvent } from '@nestjs/event-emitter';
+import { PaymentStatus, Prisma } from '@prisma/client';
+import {
+  INVOICE_ACCEPTED_EVENT,
+  type InvoiceAcceptedPayload,
+} from 'src/common/event';
 import { CRADLE_PAYMENT_CONFIG } from 'src/config/cradle-payment.config';
 import type { CradlePaymentConfig } from 'src/config/cradle-payment.config';
+import { InvoiceService } from 'src/invoice/invoice.service';
+import { LedgerService } from 'src/ledger/ledger.service';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { SmsService } from 'src/sms/sms.service';
+import { TransactionService } from 'src/transaction/transaction.service';
 import { CradlePaymentService } from './cradle/cradle-payment.service';
 import { CradleProcessResponse } from './cradle/cradle.types';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
@@ -24,6 +33,10 @@ export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cradlePayment: CradlePaymentService,
+    private readonly invoiceService: InvoiceService,
+    private readonly ledgerService: LedgerService,
+    private readonly smsService: SmsService,
+    private readonly transactionService: TransactionService,
     @Inject(CRADLE_PAYMENT_CONFIG) private readonly config: CradlePaymentConfig,
   ) {}
 
@@ -72,6 +85,59 @@ export class PaymentsService {
     };
   }
 
+  @OnEvent(INVOICE_ACCEPTED_EVENT)
+  async handleInvoiceAccepted(payload: InvoiceAcceptedPayload) {
+    try {
+      await this.initiateInvoicePayment(payload.invoiceId);
+    } catch (error) {
+      this.logger.error(
+        `Could not initiate payment for accepted invoice ${payload.invoiceId}`,
+        error,
+      );
+    }
+  }
+
+  async initiateInvoicePayment(invoiceId: string) {
+    const invoice = await this.invoiceService.findInvoice(invoiceId);
+    const transaction = await this.transactionService.createTransaction(
+      invoice.id,
+    );
+    const payerPhone = normalizeKenyanPhoneNumber(invoice.customerNumber);
+
+    let providerResponse: CradleProcessResponse;
+    try {
+      providerResponse = await this.cradlePayment.initiatePayment({
+        merchantId: this.config.merchantId,
+        currency: this.config.currency,
+        amount: invoice.amount,
+        payerPhone,
+        externalId: transaction.id,
+        callbackUrl: this.config.callbackUrl,
+        redirectUrl: this.config.redirectUrl,
+      });
+    } catch (error) {
+      await this.transactionService.markAsFailed(transaction.id);
+      throw error;
+    }
+
+    const providerReference = this.extractProviderReference(providerResponse);
+    await this.transactionService.markAsPushed(
+      transaction.id,
+      providerReference ?? transaction.id,
+      providerReference ?? transaction.id,
+    );
+    await this.invoiceService.markPaymentPending(invoice.id);
+
+    this.logger.log(`STK Push requested for accepted invoice ${invoice.code}`);
+    return {
+      success: true,
+      invoiceId: invoice.id,
+      transactionId: transaction.id,
+      providerReference,
+      message: 'STK Push has been sent to your phone.',
+    };
+  }
+
   // Status view used by the frontend to poll for completion.
   async findByInvoiceNumber(invoiceNumber: string) {
     const payment = await this.prisma.payment.findUnique({
@@ -103,15 +169,16 @@ export class PaymentsService {
 
     const invoiceNumber = this.extractExternalId(payload);
     if (!invoiceNumber) {
-      this.logger.warn('Callback received without a resolvable reference.');
-      return { received: true, acknowledged: true };
+      return this.handleInvoicePaymentCallback(payload);
     }
 
     const payment = await this.prisma.payment.findUnique({
       where: { invoiceNumber },
     });
     if (!payment) {
-      this.logger.warn(`Callback received for unknown invoice ${invoiceNumber}`);
+      this.logger.warn(
+        `Callback received for unknown invoice ${invoiceNumber}`,
+      );
       return { received: true, acknowledged: true };
     }
 
@@ -136,6 +203,44 @@ export class PaymentsService {
       where: { id: payment.id },
       data,
     });
+
+    return { received: true, acknowledged: true };
+  }
+
+  async handleInvoicePaymentCallback(rawPayload: unknown) {
+    const payload: Record<string, unknown> =
+      rawPayload && typeof rawPayload === 'object'
+        ? (rawPayload as Record<string, unknown>)
+        : {};
+
+    const transaction = await this.findCallbackTransaction(payload);
+    if (!transaction) {
+      this.logger.warn('Invoice payment callback did not match a transaction.');
+      return { received: true, acknowledged: true };
+    }
+
+    if (this.isTransactionTerminal(transaction.status)) {
+      return { received: true, acknowledged: true };
+    }
+
+    const nextStatus = this.resolveCallbackStatus(payload);
+    if (nextStatus === PaymentStatus.SUCCESS) {
+      const receipt = this.extractReceipt(payload) ?? transaction.id;
+      const amount = this.extractAmount(payload) ?? transaction.invoice.amount;
+      await this.ledgerService.recordSettlement(
+        transaction.id,
+        receipt,
+        amount,
+      );
+      await this.smsService.sendSettlementConfirmation(transaction.invoiceId);
+      this.logger.log(`Invoice payment ${transaction.id} settled.`);
+    } else if (
+      nextStatus === PaymentStatus.FAILED ||
+      nextStatus === PaymentStatus.EXPIRED
+    ) {
+      await this.transactionService.markAsFailed(transaction.id);
+      this.logger.log(`Invoice payment ${transaction.id} failed.`);
+    }
 
     return { received: true, acknowledged: true };
   }
@@ -187,7 +292,7 @@ export class PaymentsService {
       select: { invoiceNumber: true },
     });
     const sequence = latest
-      ? parseInvoiceSequence(latest.invoiceNumber, year) ?? 0
+      ? (parseInvoiceSequence(latest.invoiceNumber, year) ?? 0)
       : 0;
     return buildInvoiceNumber(sequence + 1, year);
   }
@@ -243,10 +348,110 @@ export class PaymentsService {
     return undefined;
   }
 
+  private async findCallbackTransaction(payload: Record<string, unknown>) {
+    const transactionId = this.extractTransactionId(payload);
+    if (transactionId) {
+      const transaction = await this.prisma.transaction.findUnique({
+        where: { id: transactionId },
+        include: { invoice: true },
+      });
+      if (transaction) {
+        return transaction;
+      }
+    }
+
+    const checkoutRequestId = this.extractCheckoutRequestId(payload);
+    if (!checkoutRequestId) {
+      return null;
+    }
+
+    return this.prisma.transaction.findUnique({
+      where: { checkoutRequestId },
+      include: { invoice: true },
+    });
+  }
+
+  private extractTransactionId(
+    payload: Record<string, unknown>,
+  ): string | undefined {
+    const candidates = ['externalId', 'external_id', 'transactionId'];
+    for (const key of candidates) {
+      const value = payload[key];
+      if (typeof value === 'string' && value.length > 0) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  private extractCheckoutRequestId(
+    payload: Record<string, unknown>,
+  ): string | undefined {
+    const candidates = [
+      'checkoutRequestId',
+      'CheckoutRequestID',
+      'CheckoutRequestId',
+      'merchantRequestID',
+      'merchantRequestId',
+      'providerReference',
+      'reference',
+    ];
+    for (const key of candidates) {
+      const value = payload[key];
+      if (typeof value === 'string' && value.length > 0) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  private extractReceipt(payload: Record<string, unknown>): string | undefined {
+    const candidates = [
+      'receipt',
+      'mpesaReceipt',
+      'MpesaReceiptNumber',
+      'providerReference',
+      'reference',
+    ];
+    for (const key of candidates) {
+      const value = payload[key];
+      if (typeof value === 'string' && value.length > 0) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  private extractAmount(payload: Record<string, unknown>): number | undefined {
+    const candidates = ['amount', 'Amount', 'paidAmount'];
+    for (const key of candidates) {
+      const value = payload[key];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+      }
+      if (typeof value === 'string') {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) {
+          return parsed;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private isTransactionTerminal(status: string): boolean {
+    return status === 'SUCCESS' || status === 'FAILED' || status === 'UNKNOWN';
+  }
+
   private extractExternalId(
     payload: Record<string, unknown>,
   ): string | undefined {
-    const candidates = ['externalId', 'external_id', 'invoiceNumber', 'invoice'];
+    const candidates = [
+      'externalId',
+      'external_id',
+      'invoiceNumber',
+      'invoice',
+    ];
     for (const key of candidates) {
       const value = payload[key];
       if (typeof value === 'string' && value.startsWith('INV-')) {
@@ -263,7 +468,13 @@ export class PaymentsService {
       return PaymentStatus.FAILED;
     }
 
-    const keys = ['status', 'paymentStatus', 'resultCode', 'ResultCode', 'code'];
+    const keys = [
+      'status',
+      'paymentStatus',
+      'resultCode',
+      'ResultCode',
+      'code',
+    ];
     for (const key of keys) {
       const value = payload[key];
       if (typeof value !== 'string') {

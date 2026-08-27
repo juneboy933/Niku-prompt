@@ -99,7 +99,10 @@ export class TransactionService {
   // Mark as failed
   async markAsFailed(transactionId: string) {
     const transaction = await this.findTransactionById(transactionId);
-    if (transaction.status !== TransactionStatus.PUSHED) {
+    if (
+      transaction.status !== TransactionStatus.INITIATED &&
+      transaction.status !== TransactionStatus.PUSHED
+    ) {
       throw new BadRequestException(
         `Cannot mark transaction as FAILED from ${transaction.status}`,
       );
