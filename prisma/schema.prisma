@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum InvoiceStatus {
+  CREATED
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  PAYMENT_PENDING
+  SETTLED
+}
+
+enum TransactionStatus {
+  INITIATED
+  PUSHED
+  SUCCESS
+  FAILED
+  UNKNOWN
+}
+
+model Manufacturer {
+  id           String   @id @default(cuid())
+  phoneNumber  String   @unique
+  businessName String
+  createdAt    DateTime @default(now())
+
+  invoices Invoice[]
+
+  @@map("manufacturers")
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  code           String        @unique
+  manufacturerId String
+  manufacturer   Manufacturer  @relation(fields: [manufacturerId], references: [id])
+  customerNumber String
+  amount         Int
+  jobDescription String?
+  status         InvoiceStatus @default(CREATED)
+  expiresAt      DateTime
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  transactions Transaction[]
+
+  @@index([manufacturerId])
+  @@index([customerNumber, status])
+  @@map("invoices")
+}
+
+model Transaction {
+  id                String            @id @default(cuid())
+  invoiceId         String
+  invoice           Invoice           @relation(fields: [invoiceId], references: [id])
+  checkoutRequestId String?           @unique
+  merchantRequestId String?
+  status            TransactionStatus @default(INITIATED)
+  pollAttempts      Int               @default(0)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  ledgerEntry Ledger?
+
+  @@index([invoiceId])
+  @@index([checkoutRequestId])
+  @@map("transactions")
+}
+
+model Ledger {
+  id            String      @id @default(cuid())
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  mpesaReceipt  String      @unique
+  amount        Int
+  settledAt     DateTime    @default(now())
+
+  @@map("ledger")
+}
