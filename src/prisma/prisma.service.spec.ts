@@ -5,6 +5,9 @@ describe('PrismaService', () => {
   let service: PrismaService;
 
   beforeEach(async () => {
+    process.env.DATABASE_URL =
+      'postgresql://prompt:dev_prompt_engine@localhost:5434/prompt_engine';
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [PrismaService],
     }).compile();
@@ -14,5 +17,9 @@ describe('PrismaService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  afterEach(async () => {
+    delete process.env.DATABASE_URL;
   });
 });

@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Secure Payment - M-Pesa</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          Helvetica, Arial, sans-serif;
+        background: linear-gradient(160deg, #0f766e 0%, #115e59 55%, #134e4a 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        color: #1f2937;
+      }
+      .card {
+        width: 100%;
+        max-width: 420px;
+        background: #ffffff;
+        border-radius: 18px;
+        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.25);
+        overflow: hidden;
+      }
+      .header {
+        background: #0f766e;
+        color: #ffffff;
+        padding: 22px 24px;
+      }
+      .header h1 {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+      }
+      .header p {
+        font-size: 13px;
+        opacity: 0.85;
+        margin-top: 4px;
+      }
+      .body {
+        padding: 24px;
+      }
+      .field {
+        margin-bottom: 18px;
+      }
+      .field label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 6px;
+      }
+      .field input {
+        width: 100%;
+        padding: 13px 14px;
+        font-size: 16px;
+        border: 1.5px solid #d1d5db;
+        border-radius: 10px;
+        outline: none;
+        transition: border-color 0.15s;
+      }
+      .field input:focus {
+        border-color: #0f766e;
+      }
+      .amount-row {
+        display: flex;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .currency-prefix {
+        display: flex;
+        align-items: center;
+        background: #f3f4f6;
+        border: 1.5px solid #d1d5db;
+        border-radius: 10px;
+        padding: 0 14px;
+        font-weight: 700;
+        color: #374151;
+        font-size: 15px;
+      }
+      .amount-row input {
+        flex: 1;
+      }
+      .btn {
+        width: 100%;
+        border: none;
+        background: #dc2626;
+        color: #ffffff;
+        font-size: 16px;
+        font-weight: 700;
+        padding: 15px;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: background 0.15s, transform 0.05s;
+      }
+      .btn:hover:not(:disabled) {
+        background: #b91c1c;
+      }
+      .btn:active:not(:disabled) {
+        transform: scale(0.99);
+      }
+      .btn:disabled {
+        background: #fca5a5;
+        cursor: not-allowed;
+      }
+      .hint {
+        font-size: 12.5px;
+        color: #6b7280;
+        text-align: center;
+        margin-top: 14px;
+        line-height: 1.5;
+      }
+      .badge {
+        display: inline-block;
+        background: #ecfdf5;
+        color: #047857;
+        border: 1px solid #a7f3d0;
+        font-size: 12.5px;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 999px;
+        margin-bottom: 10px;
+      }
+      .state {
+        display: none;
+      }
+      .state.visible {
+        display: block;
+      }
+      .info-line {
+        display: flex;
+        justify-content: space-between;
+        padding: 12px 14px;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        margin-top: 12px;
+      }
+      .info-line strong {
+        color: #374151;
+      }
+      .spinner {
+        width: 34px;
+        height: 34px;
+        border: 3px solid #e5e7eb;
+        border-top-color: #0f766e;
+        border-radius: 50%;
+        margin: 0 auto 14px;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .msg {
+        font-size: 14.5px;
+        color: #374151;
+        text-align: center;
+        line-height: 1.55;
+      }
+      .msg.ok {
+        color: #047857;
+        font-weight: 600;
+        font-size: 18px;
+      }
+      .msg.err {
+        color: #b91c1c;
+        font-weight: 600;
+        font-size: 18px;
+      }
+      .sub {
+        font-size: 13.5px;
+        color: #6b7280;
+        text-align: center;
+        margin-top: 6px;
+      }
+      .icon {
+        font-size: 40px;
+        text-align: center;
+        margin-bottom: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="header">
+        <h1>Secure Payment</h1>
+        <p>Powered by M-Pesa STK Push</p>
+      </div>
+
+      <!-- Initial state -->
+      <div class="body">
+        <div id="state-init" class="state visible">
+          <div class="field">
+            <label for="amount">Amount</label>
+            <div class="amount-row">
+              <span class="currency-prefix">KES</span>
+              <input
+                id="amount"
+                type="number"
+                inputmode="numeric"
+                min="1"
+                placeholder="100"
+                autocomplete="off"
+              />
+            </div>
+          </div>
+          <div class="field">
+            <label for="phone">M-Pesa Phone Number</label>
+            <input
+              id="phone"
+              type="tel"
+              inputmode="tel"
+              placeholder="0712 345 678"
+              autocomplete="off"
+            />
+          </div>
+          <button id="pay-btn" class="btn" type="button">Send M-Pesa Prompt</button>
+          <p class="hint">
+            An M-Pesa payment prompt will be sent to your phone. Enter your
+            M-Pesa PIN on your phone to complete the payment.
+          </p>
+        </div>
+
+        <!-- Processing state -->
+        <div id="state-processing" class="state">
+          <div class="spinner"></div>
+          <p class="msg">Processing Payment</p>
+          <p class="sub">
+            An M-Pesa prompt has been sent to your phone.<br />
+            Please check your phone and enter your M-Pesa PIN.
+          </p>
+          <div class="info-line">
+            <span>Invoice</span>
+            <strong id="proc-invoice">-</strong>
+          </div>
+          <div class="info-line">
+            <span>Amount</span>
+            <strong id="proc-amount">-</strong>
+          </div>
+        </div>
+
+        <!-- Success state -->
+        <div id="state-success" class="state">
+          <div class="icon">&#10004;</div>
+          <p class="msg ok">Payment Successful</p>
+          <div class="info-line">
+            <span>Invoice</span>
+            <strong id="ok-invoice">-</strong>
+          </div>
+          <div class="info-line">
+            <span>Amount Paid</span>
+            <strong id="ok-amount">-</strong>
+          </div>
+          <div style="height: 18px"></div>
+          <a id="receipt-link" class="btn" style="display: block; text-align: center; text-decoration: none" href="#">
+            View Receipt
+          </a>
+        </div>
+
+        <!-- Failed state -->
+        <div id="state-failed" class="state">
+          <div class="icon">&#10007;</div>
+          <p class="msg err">Payment Failed</p>
+          <p class="sub">
+            Your payment could not be completed.<br />
+            Please try again.
+          </p>
+          <div style="height: 18px"></div>
+          <button id="retry-btn" class="btn" type="button">Try Again</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var stateInit = document.getElementById('state-init');
+        var stateProcessing = document.getElementById('state-processing');
+        var stateSuccess = document.getElementById('state-success');
+        var stateFailed = document.getElementById('state-failed');
+
+        var amountInput = document.getElementById('amount');
+        var phoneInput = document.getElementById('phone');
+        var payBtn = document.getElementById('pay-btn');
+        var retryBtn = document.getElementById('retry-btn');
+
+        var polling = null;
+        var currentInvoice = null;
+
+        function showState(state) {
+          [stateInit, stateProcessing, stateSuccess, stateFailed].forEach(
+            function (el) {
+              el.classList.remove('visible');
+            },
+          );
+          state.classList.add('visible');
+        }
+
+        function updateButtonLabel() {
+          var amount = parseCurrency(amountInput.value);
+          if (amount > 0) {
+            payBtn.textContent = 'Pay KES ' + amount.toLocaleString();
+          } else {
+            payBtn.textContent = 'Send M-Pesa Prompt';
+          }
+        }
+
+        function parseCurrency(value) {
+          var n = parseInt(value, 10);
+          return Number.isFinite(n) && n > 0 ? n : 0;
+        }
+
+        function startPolling(invoice) {
+          stopPolling();
+          polling = setInterval(function () {
+            fetch('/api/payments/' + encodeURIComponent(invoice))
+              .then(function (res) {
+                if (!res.ok) throw new Error('status lookup failed');
+                return res.json();
+              })
+              .then(function (data) {
+                if (data.status === 'SUCCESS') {
+                  stopPolling();
+                  showSuccess(data);
+                } else if (
+                  data.status === 'FAILED' ||
+                  data.status === 'EXPIRED'
+                ) {
+                  stopPolling();
+                  showState(stateFailed);
+                }
+              })
+              .catch(function () {
+                // transient network error: keep polling
+              });
+          }, 5000);
+        }
+
+        function stopPolling() {
+          if (polling) {
+            clearInterval(polling);
+            polling = null;
+          }
+        }
+
+        function showSuccess(data) {
+          document.getElementById('ok-invoice').textContent = data.invoiceNumber;
+          document.getElementById('ok-amount').textContent =
+            (data.currency || 'KES') + ' ' + data.amount.toLocaleString();
+          document.getElementById('receipt-link').href =
+            '/payment/receipt/' + encodeURIComponent(data.invoiceNumber);
+          showState(stateSuccess);
+        }
+
+        function pay() {
+          var amount = parseCurrency(amountInput.value);
+          var phone = phoneInput.value.trim();
+          if (amount <= 0) {
+            alert('Please enter a valid amount.');
+            amountInput.focus();
+            return;
+          }
+          if (!phone) {
+            alert('Please enter your M-Pesa phone number.');
+            phoneInput.focus();
+            return;
+          }
+
+          payBtn.disabled = true;
+
+          fetch('/api/payments/initiate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone: phone, amount: amount }),
+          })
+            .then(function (res) {
+              if (!res.ok) {
+                return res.json().then(function (body) {
+                  var message =
+                    (body && body.message) || 'Payment could not be initiated.';
+                  throw new Error(message);
+                });
+              }
+              return res.json();
+            })
+            .then(function (data) {
+              currentInvoice = data.invoiceNumber;
+              document.getElementById('proc-invoice').textContent =
+                data.invoiceNumber;
+              document.getElementById('proc-amount').textContent =
+                'KES ' + amount.toLocaleString();
+              showState(stateProcessing);
+              startPolling(data.invoiceNumber);
+            })
+            .catch(function (err) {
+              payBtn.disabled = false;
+              alert(err.message || 'Payment could not be initiated.');
+            });
+        }
+
+        retryBtn.addEventListener('click', function () {
+          showState(stateInit);
+          payBtn.disabled = false;
+        });
+
+        payBtn.addEventListener('click', pay);
+        amountInput.addEventListener('input', updateButtonLabel);
+        updateButtonLabel();
+      })();
+    </script>
+  </body>
+</html>
