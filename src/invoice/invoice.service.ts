@@ -5,26 +5,12 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InvoiceStatus, Prisma } from '@prisma/client';
+import { normalizeCustomerNumber } from 'src/common/phone';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class InvoiceService {
   constructor(private readonly prisma: PrismaService) {}
-
-  // normalize customer number
-  private normalizeCustomerNumber(phone: string) {
-    // '0712345678' , '+254712345678' -> '254712345678'
-    let normalized = phone.replace(/\D/g, '');
-    if (normalized.startsWith('0')) {
-      normalized = '254' + normalized.slice(1);
-    }
-
-    if (!/^254[17]\d{8}$/.test(normalized)) {
-      throw new BadRequestException('Invalid phone number format.');
-    }
-
-    return normalized;
-  }
 
   // Create new invoice
   async createInvoice(
@@ -41,7 +27,7 @@ export class InvoiceService {
       throw new NotFoundException('Manufacturer not found');
     }
 
-    const normalizedPhoneNumber = this.normalizeCustomerNumber(customerNumber);
+    const normalizedPhoneNumber = normalizeCustomerNumber(customerNumber);
 
     const code = Math.floor(1000 + Math.random() * 90000).toString();
     const existingCode = await this.prisma.invoice.findUnique({
