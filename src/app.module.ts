@@ -11,6 +11,22 @@ import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true }), PrismaModule, ManufacturerModule, InvoiceModule, TransactionModule, LedgerModule, PaymentsModule],
+import { SmsModule } from './sms/sms.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { UssdModule } from './ussd/ussd.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    EventEmitterModule.forRoot(),
+    PrismaModule,
+    ManufacturerModule,
+    InvoiceModule,
+    TransactionModule,
+    LedgerModule,
+    SmsModule,
+    UssdModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

@@ -2,9 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { InvoiceService } from 'src/invoice/invoice.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { TransactionService } from './transaction.service';
+import { InvoiceService } from 'src/invoice/invoice.service';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 describe('TransactionService', () => {
   let service: TransactionService;
+  const invoiceService = {};
+  const prismaService = {};
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -22,6 +26,8 @@ describe('TransactionService', () => {
             },
           },
         },
+        { provide: InvoiceService, useValue: invoiceService },
+        { provide: PrismaService, useValue: prismaService },
       ],
     }).compile();
 
