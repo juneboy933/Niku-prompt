@@ -4,12 +4,27 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { InvoiceStatus } from '@prisma/client';
+import { InvoiceStatus, Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class InvoiceService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // normalize customer number
+  private normalizeCustomerNumber(phone: string) {
+    // '0712345678' , '+254712345678' -> '254712345678'
+    let normalized = phone.replace(/\D/g, '');
+    if (normalized.startsWith('0')) {
+      normalized = '254' + normalized.slice(1);
+    }
+
+    if (!/^254[17]\d{8}$/.test(normalized)) {
+      throw new BadRequestException('Invalid phone number format.');
+    }
+
+    return normalized;
+  }
 
   // Create new invoice
   async createInvoice(
@@ -26,6 +41,8 @@ export class InvoiceService {
       throw new NotFoundException('Manufacturer not found');
     }
 
+    const normalizedPhoneNumber = this.normalizeCustomerNumber(customerNumber);
+
     const code = Math.floor(1000 + Math.random() * 90000).toString();
     const existingCode = await this.prisma.invoice.findUnique({
       where: { code },
@@ -36,7 +53,7 @@ export class InvoiceService {
     const result = await this.prisma.invoice.create({
       data: {
         manufacturerId,
-        customerNumber,
+        customerNumber: normalizedPhoneNumber,
         amount,
         jobDescription,
         code,
@@ -139,18 +156,21 @@ export class InvoiceService {
   // IMPORTANT: this must only ever be called by LedgerService, as a side
   // effect of writing a Ledger entry — never called directly from
   // ussd/sms/mpesa. Ledger is the source of truth for settlement.
-  //   async settleInvoice(invoiceId: string) {
-  //     const invoice = await this.findInvoice(invoiceId);
+  async settleInvoice(
+    invoiceId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const invoice = await this.findInvoice(invoiceId);
 
-  //     if (invoice.status !== InvoiceStatus.PAYMENT_PENDING) {
-  //       throw new BadRequestException(
-  //         `Cannot settle invoice from status ${invoice.status}`,
-  //       );
-  //     }
+    if (invoice.status !== InvoiceStatus.PAYMENT_PENDING) {
+      throw new BadRequestException(
+        `Cannot settle invoice from status ${invoice.status}`,
+      );
+    }
 
-  //     return this.prisma.invoice.update({
-  //       where: { id: invoice.id },
-  //       data: { status: InvoiceStatus.SETTLED },
-  //     });
-  //   }
+    return tx.invoice.update({
+      where: { id: invoice.id },
+      data: { status: InvoiceStatus.SETTLED },
+    });
+  }
 }
