@@ -5,21 +5,16 @@ import { CradleAuthService } from './cradle-auth.service';
 import { CradlePaymentService } from './cradle-payment.service';
 import { CradleProcessRequest } from './cradle.types';
 
+const mockPost = jest.fn();
+const mockIsAxiosError = (err: unknown): boolean =>
+  !!err &&
+  typeof err === 'object' &&
+  (err as { isAxiosError?: boolean }).isAxiosError === true;
+
 jest.mock('axios', () => {
-  const mockPost = jest.fn();
-  const mockIsAxiosError = jest.fn(
-    (err: unknown) =>
-      !!err &&
-      typeof err === 'object' &&
-      (err as { isAxiosError?: boolean }).isAxiosError === true,
-  );
   const axiosMock = { post: mockPost, isAxiosError: mockIsAxiosError };
   return { ...axiosMock, default: axiosMock, __esModule: true };
 });
-
-import axiosModule from 'axios';
-
-const mockedAxiosPost = axiosModule.post as jest.Mock;
 
 const config = {
   baseUrl: 'https://payment.cradlevoices.com',
@@ -40,9 +35,7 @@ const payload: CradleProcessRequest = {
   redirectUrl: config.redirectUrl,
 };
 
-function axiosError(status: number | undefined): Error & {
-  isAxiosError: boolean;
-} {
+function axiosError(status: number | undefined): Error {
   const error = new Error('provider error') as Error & {
     isAxiosError: boolean;
   };
@@ -68,7 +61,6 @@ describe('CradlePaymentService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CradlePaymentService,
-        CradleAuthService,
         { provide: CRADLE_PAYMENT_CONFIG, useValue: config },
         { provide: CradleAuthService, useValue: auth },
       ],
@@ -82,19 +74,19 @@ describe('CradlePaymentService', () => {
   });
 
   it('posts to /process/ with a bearer access token', async () => {
-    mockedAxiosPost.mockResolvedValueOnce({
+    mockPost.mockResolvedValueOnce({
       data: { error: false, message: 'queued', reference: 'REF123' },
     });
 
     const result = await service.initiatePayment(payload);
 
-    expect(mockedAxiosPost).toHaveBeenCalledWith(
+    expect(mockPost).toHaveBeenCalledWith(
       `${config.baseUrl}/process/`,
       payload,
       expect.objectContaining({
         headers: expect.objectContaining({
           'Content-Type': 'application/json',
-          Authorization: 'Bearer VALID_TOKEN',
+          Authorization: `Bearer ${Buffer.from('VALID_TOKEN').toString('base64')}`,
         }),
       }),
     );
@@ -102,7 +94,7 @@ describe('CradlePaymentService', () => {
   });
 
   it('clears the token and retries exactly once on a 401 response', async () => {
-    mockedAxiosPost
+    mockPost
       .mockRejectedValueOnce(axiosError(401))
       .mockResolvedValueOnce({ data: { error: false, message: 'ok' } });
 
@@ -110,20 +102,20 @@ describe('CradlePaymentService', () => {
 
     expect(auth.clearToken).toHaveBeenCalled();
     expect(auth.getValidAccessToken).toHaveBeenCalledTimes(2);
-    expect(mockedAxiosPost).toHaveBeenCalledTimes(2);
+    expect(mockPost).toHaveBeenCalledTimes(2);
   });
 
   it('does not retry infinitely on repeated auth failure', async () => {
-    mockedAxiosPost.mockRejectedValue(axiosError(401));
+    mockPost.mockRejectedValue(axiosError(401));
 
     await expect(service.initiatePayment(payload)).rejects.toThrow();
 
     expect(auth.clearToken).toHaveBeenCalledTimes(2);
-    expect(mockedAxiosPost).toHaveBeenCalledTimes(2);
+    expect(mockPost).toHaveBeenCalledTimes(2);
   });
 
   it('maps provider network outages to ServiceUnavailableException', async () => {
-    mockedAxiosPost.mockRejectedValueOnce(axiosError(undefined));
+    mockPost.mockRejectedValueOnce(axiosError(undefined));
 
     await expect(service.initiatePayment(payload)).rejects.toThrow(
       ServiceUnavailableException,
@@ -131,7 +123,7 @@ describe('CradlePaymentService', () => {
   });
 
   it('maps provider 5xx responses to ServiceUnavailableException', async () => {
-    mockedAxiosPost.mockRejectedValueOnce(axiosError(503));
+    mockPost.mockRejectedValueOnce(axiosError(503));
 
     await expect(service.initiatePayment(payload)).rejects.toThrow(
       ServiceUnavailableException,

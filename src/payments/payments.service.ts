@@ -5,8 +5,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
-import { Payment, PaymentStatus, Prisma } from '@prisma/client';
+import { PaymentStatus, Prisma } from '@prisma/client';
 import { CRADLE_PAYMENT_CONFIG } from 'src/config/cradle-payment.config';
 import type { CradlePaymentConfig } from 'src/config/cradle-payment.config';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -167,7 +168,13 @@ export class PaymentsService {
           lastError = error;
           continue;
         }
-        throw error;
+        this.logger.error(
+          `Failed to create pending payment: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        throw new ServiceUnavailableException(
+          'Payment service is temporarily unavailable. Please try again.',
+          { cause: error },
+        );
       }
     }
     throw new ConflictException(

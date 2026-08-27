@@ -61,6 +61,7 @@ export class CradlePaymentService {
     token?: string,
   ): Promise<CradleProcessResponse> {
     const accessToken = token ?? (await this.auth.getValidAccessToken());
+    const encodedToken = Buffer.from(accessToken, 'utf8').toString('base64');
     this.logger.log(`STK Push requested for externalId ${payload.externalId}`);
     const response = await axios.post<CradleProcessResponse>(
       `${this.config.baseUrl}/process/`,
@@ -68,7 +69,7 @@ export class CradlePaymentService {
       {
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${encodedToken}`,
         },
         timeout: CRADLE_REQUEST_TIMEOUT_MS,
       },

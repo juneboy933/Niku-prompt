@@ -19,7 +19,7 @@ describe('PrismaService', () => {
     expect(service).toBeDefined();
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     delete process.env.DATABASE_URL;
   });
 });

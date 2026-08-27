@@ -35,16 +35,19 @@ describe('PaymentsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
 
+    // $transaction must invoke the interactive-transaction callback so the
+    // real createPendingPayment flow runs against the mocked tx.
     prisma = {
       payment: {
-        create: jest.fn(),
+        create: jest.fn().mockReturnValue({ id: 'pay_1' }),
         findUnique: jest.fn(),
-        findFirst: jest.fn(),
-        update: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockReturnValue({
+          id: 'pay_1',
+          status: PaymentStatus.PROCESSING,
+        }),
       },
-      $transaction: jest.fn((fn: (tx: unknown) => unknown) =>
-        fn(prisma),
-      ),
+      $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn(prisma)),
     };
 
     cradle = { initiatePayment: jest.fn() };
@@ -63,19 +66,6 @@ describe('PaymentsService', () => {
 
   describe('initiatePayment', () => {
     beforeEach(() => {
-      prisma.payment.findFirst.mockResolvedValue(null);
-      prisma.payment.create.mockImplementation(
-        async ({ data }: { data: Record<string, unknown> }) => ({
-          id: 'pay_1',
-          ...data,
-        }),
-      );
-      prisma.payment.update.mockImplementation(
-        async ({ data }: { data: Record<string, unknown> }) => ({
-          id: 'pay_1',
-          ...data,
-        }),
-      );
       cradle.initiatePayment.mockResolvedValue({
         error: false,
         message: 'queued',
@@ -141,20 +131,24 @@ describe('PaymentsService', () => {
         invoiceNumber: 'INV-2026-000001',
       });
 
-      const first = await service.initiatePayment({
-        phone: '254712345678',
-        amount: 50,
-      });
-      const second = await service.initiatePayment({
-        phone: '+254712345678',
-        amount: 60,
-      });
+      await service.initiatePayment({ phone: '254712345678', amount: 50 });
+      await service.initiatePayment({ phone: '+254712345678', amount: 60 });
 
-      expect(first.invoiceNumber).toBe('INV-2026-000001');
-      expect(second.invoiceNumber).toBe('INV-2026-000002');
+      expect(prisma.payment.create).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          data: expect.objectContaining({ invoiceNumber: 'INV-2026-000001' }),
+        }),
+      );
+      expect(prisma.payment.create).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          data: expect.objectContaining({ invoiceNumber: 'INV-2026-000002' }),
+        }),
+      );
     });
 
-    it('marks the payment FAILED and rethrows when the provider rejects the token', async () => {
+    it('marks the payment FAILED and rethrows when the provider is unavailable', async () => {
       cradle.initiatePayment.mockRejectedValue(
         new ServiceUnavailableException('down'),
       );
@@ -207,27 +201,17 @@ describe('PaymentsService', () => {
   });
 
   describe('handleCradleCallback', () => {
-    let current: Record<string, unknown>;
-
-    beforeEach(() => {
-      current = {
+    it('stores the raw callback and marks the payment SUCCESS', async () => {
+      prisma.payment.findUnique.mockResolvedValue({
         id: 'pay_1',
         invoiceNumber: 'INV-2026-000001',
-        amount: 100,
-        currency: 'KES',
-        payerPhone: '254712345678',
         status: PaymentStatus.PROCESSING,
-      };
-      prisma.payment.findUnique.mockImplementation(async () => ({ ...current }));
-      prisma.payment.update.mockImplementation(
-        async ({ data }: { data: Record<string, unknown> }) => {
-          current = { ...current, ...data };
-          return { ...current };
-        },
-      );
-    });
+      });
+      prisma.payment.update.mockResolvedValue({
+        id: 'pay_1',
+        status: PaymentStatus.SUCCESS,
+      });
 
-    it('stores the raw callback and marks the payment SUCCESS', async () => {
       const payload = {
         externalId: 'INV-2026-000001',
         status: 'SUCCESS',
@@ -242,28 +226,58 @@ describe('PaymentsService', () => {
           data: expect.objectContaining({
             callbackResponse: payload,
             status: PaymentStatus.SUCCESS,
+            completedAt: expect.any(Date),
           }),
         }),
       );
     });
 
     it('does not re-process an already successful payment (idempotent)', async () => {
-      await service.handleCradleCallback({
-        externalId: 'INV-2026-000001',
-        status: 'SUCCESS',
+      prisma.payment.findUnique.mockResolvedValue({
+        id: 'pay_1',
+        invoiceNumber: 'INV-2026-000001',
+        status: PaymentStatus.SUCCESS,
       });
-      prisma.payment.update.mockClear();
+      prisma.payment.update.mockResolvedValue({
+        id: 'pay_1',
+        status: PaymentStatus.SUCCESS,
+      });
+
+      const payload = {
+        externalId: 'INV-2026-000001',
+        status: 'FAILED',
+      };
+
+      await service.handleCradleCallback(payload);
+
+      // The terminal payment is not re-processed: only the raw payload is
+      // stored, no status change is requested.
+      expect(prisma.payment.update).toHaveBeenCalledWith({
+        where: { id: 'pay_1' },
+        data: { callbackResponse: payload },
+      });
+    });
+
+    it('marks a FAILED callback as FAILED', async () => {
+      prisma.payment.findUnique.mockResolvedValue({
+        id: 'pay_1',
+        invoiceNumber: 'INV-2026-000001',
+        status: PaymentStatus.PROCESSING,
+      });
 
       await service.handleCradleCallback({
         externalId: 'INV-2026-000001',
         status: 'FAILED',
       });
 
-      expect(prisma.payment.update).toHaveBeenCalledTimes(1);
-      const arg = prisma.payment.update.mock
-        .calls[0][0] as unknown as { data: Record<string, unknown> };
-      expect(arg.data.status).toBeUndefined();
-      expect(current.status).toBe(PaymentStatus.SUCCESS);
+      expect(prisma.payment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: PaymentStatus.FAILED,
+            completedAt: expect.any(Date),
+          }),
+        }),
+      );
     });
 
     it('acknowledges callbacks without a resolvable reference', async () => {
