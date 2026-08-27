@@ -1,4 +1,8 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
@@ -10,6 +14,17 @@ export class ManufacturerService {
     return await this.prisma.manufacturer.findUnique({
       where: { phoneNumber: phone },
     });
+  }
+
+  async findById(manufacturerId: string) {
+    const manufacturer = await this.prisma.manufacturer.findUnique({
+      where: { id: manufacturerId },
+    });
+    if (!manufacturer) {
+      throw new NotFoundException('Manufacturer not found');
+    }
+
+    return manufacturer;
   }
 
   // Create a new manufacturer

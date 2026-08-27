@@ -3,9 +3,15 @@ import { InvoiceService } from 'src/invoice/invoice.service';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { TransactionService } from 'src/transaction/transaction.service';
 import { LedgerService } from './ledger.service';
+import { InvoiceService } from 'src/invoice/invoice.service';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { TransactionService } from 'src/transaction/transaction.service';
 
 describe('LedgerService', () => {
   let service: LedgerService;
+  const invoiceService = {};
+  const prismaService = {};
+  const transactionService = {};
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -17,6 +23,9 @@ describe('LedgerService', () => {
           provide: PrismaService,
           useValue: { $transaction: jest.fn() },
         },
+        { provide: InvoiceService, useValue: invoiceService },
+        { provide: PrismaService, useValue: prismaService },
+        { provide: TransactionService, useValue: transactionService },
       ],
     }).compile();
 

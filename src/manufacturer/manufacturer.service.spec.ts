@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ManufacturerService } from './manufacturer.service';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 describe('ManufacturerService', () => {
   let service: ManufacturerService;
+  const prismaService = {};
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -15,6 +17,7 @@ describe('ManufacturerService', () => {
             manufacturer: { findUnique: jest.fn(), create: jest.fn() },
           },
         },
+        { provide: PrismaService, useValue: prismaService },
       ],
     }).compile();
 

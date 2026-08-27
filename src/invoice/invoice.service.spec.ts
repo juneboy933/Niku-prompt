@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { InvoiceService } from './invoice.service';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 describe('InvoiceService', () => {
   let service: InvoiceService;
+  const prismaService = {};
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -20,6 +22,7 @@ describe('InvoiceService', () => {
             },
           },
         },
+        { provide: PrismaService, useValue: prismaService },
       ],
     }).compile();
 
