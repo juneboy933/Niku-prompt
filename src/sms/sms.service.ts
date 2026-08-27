@@ -1,26 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import * as AfricasTalking from 'africastalking';
+import AfricasTalking from 'africastalking';
 import { InvoiceService } from 'src/invoice/invoice.service';
 import { ManufacturerService } from 'src/manufacturer/manufacturer.service';
 import { INVOICE_ACCEPTED_EVENT } from 'src/common/event';
 
-type AfricaTalkingClient = {
-  SMS: {
-    send(options: { to: string[]; message: string }): Promise<unknown>;
-  };
-};
-
-type AfricaTalkingFactory = (options: {
-  username: string;
-  apiKey: string;
-}) => AfricaTalkingClient;
-
 @Injectable()
 export class SmsService {
   private readonly logger = new Logger(SmsService.name);
-  private readonly sms: AfricaTalkingClient['SMS'];
+  private readonly sms: ReturnType<typeof AfricasTalking>['SMS'];
 
   constructor(
     private readonly config: ConfigService,
@@ -28,9 +17,7 @@ export class SmsService {
     private readonly manufacturerService: ManufacturerService,
     private readonly eventEmitter: EventEmitter2,
   ) {
-    const createAfricaTalking =
-      AfricasTalking as unknown as AfricaTalkingFactory;
-    const at = createAfricaTalking({
+    const at = AfricasTalking({
       username: this.config.get<string>('AT_USERNAME')!,
       apiKey: this.config.get<string>('AT_API_KEY')!,
     });
@@ -51,7 +38,7 @@ export class SmsService {
     }
   }
 
-  // ---- Message builders ----
+  // ---- Message builders —----
 
   private buildInvoiceSentMessage(
     businessName: string,

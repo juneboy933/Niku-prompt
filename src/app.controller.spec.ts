@@ -15,8 +15,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return the prompt engine greeting', () => {
+      expect(appController.getHello()).toBe('Hello From Prompt Engine!');
     });
   });
 });
