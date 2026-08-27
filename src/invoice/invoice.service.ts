@@ -68,8 +68,11 @@ export class InvoiceService {
   }
 
   // Find invoice
-  async findInvoice(invoiceId: string) {
-    const invoice = await this.prisma.invoice.findUnique({
+  async findInvoice(
+    invoiceId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const invoice = await tx.invoice.findUnique({
       where: { id: invoiceId },
     });
     if (!invoice) throw new NotFoundException('Invoice not found');
@@ -160,7 +163,7 @@ export class InvoiceService {
     invoiceId: string,
     tx: Prisma.TransactionClient = this.prisma,
   ) {
-    const invoice = await this.findInvoice(invoiceId);
+    const invoice = await this.findInvoice(invoiceId, tx);
 
     if (invoice.status !== InvoiceStatus.PAYMENT_PENDING) {
       throw new BadRequestException(

@@ -36,8 +36,11 @@ export class TransactionService {
   }
 
   // Find transaction by Id
-  async findTransactionById(transactionId: string) {
-    const transaction = await this.prisma.transaction.findUnique({
+  async findTransactionById(
+    transactionId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const transaction = await tx.transaction.findUnique({
       where: { id: transactionId },
     });
     if (!transaction) throw new NotFoundException('Transaction not found');
@@ -81,7 +84,7 @@ export class TransactionService {
     transactionId: string,
     tx: Prisma.TransactionClient = this.prisma,
   ) {
-    const transaction = await this.findTransactionById(transactionId);
+    const transaction = await this.findTransactionById(transactionId, tx);
     if (transaction.status !== TransactionStatus.PUSHED) {
       throw new BadRequestException(
         `Cannot mark transaction as SUCCESS from ${transaction.status}`,
