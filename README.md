@@ -84,7 +84,7 @@ npm run start:dev
 Copy `.env.example` to `.env` and fill in:
 
 ```env
-DATABASE_URL=postgresql://prompt:dev_prompt_engine@localhost:5434/prompt_engine
+DATABASE_URL=postgresql://postgres_user:postgre_password@localhost:port/postgres_database
 
 # Africa's Talking — sandbox username is always "sandbox"
 AT_USERNAME=sandbox
