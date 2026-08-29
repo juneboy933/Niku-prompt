@@ -84,7 +84,7 @@ npm run start:dev
 Copy `.env.example` to `.env` and fill in:
 
 ```env
-DATABASE_URL=postgresql://postgres_user:postgre_password@localhost:port/postgres_database
+DATABASE_URL=postgresql://postgres_user:postgres_password@localhost:port/postgres_database
 
 # Africa's Talking — sandbox username is always "sandbox"
 AT_USERNAME=sandbox
@@ -167,9 +167,6 @@ before a live demo:
 
 ## Suggested next steps
 
-- **Fix the phone-format mismatch** described above — normalize `from` in
-  `SmsService.handleInboundReply` the same way `Invoice.customerNumber` is
-  normalized, or the accept/reject guard silently drops legitimate replies.
 - **`InvoiceStatus.EXPIRED` is defined but never set.** Nothing currently
   transitions a `SENT` invoice past its 24h `expiresAt`. A lazy check
   (flip the status when `findInvoiceByCode` notices `expiresAt` has passed)
