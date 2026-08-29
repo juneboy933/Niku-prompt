@@ -5,6 +5,7 @@ import AfricasTalking from 'africastalking';
 import { InvoiceService } from 'src/invoice/invoice.service';
 import { ManufacturerService } from 'src/manufacturer/manufacturer.service';
 import { INVOICE_ACCEPTED_EVENT } from 'src/common/event';
+import { normalizeCustomerNumber } from 'src/common/phone';
 
 @Injectable()
 export class SmsService {
@@ -147,6 +148,7 @@ export class SmsService {
   // ---- Inbound reply handler — POST /sms/inbound lands here ----
 
   async handleInboundReply(from: string, text: string) {
+    const normalizedFrom = normalizeCustomerNumber(from);
     const match = text.trim().match(/^(\d+)-([12])$/);
 
     if (!match) {
@@ -171,7 +173,7 @@ export class SmsService {
 
     // Confirm the reply is actually coming from the invoice's customer —
     // otherwise anyone who learns a code could accept/reject someone else's invoice
-    if (invoice.customerNumber !== from) {
+    if (invoice.customerNumber !== normalizedFrom) {
       this.logger.warn(
         `Reply to invoice ${code} from unexpected number ${from}`,
       );
@@ -190,7 +192,11 @@ export class SmsService {
       }
 
       await this.sendSms(from, this.buildAcceptedCustomerMessage());
-      this.eventEmitter.emit(INVOICE_ACCEPTED_EVENT, { invoiceId: invoice.id });
+
+      const eventEmitter = this.eventEmitter as unknown as {
+        emit: (eventName: string, payload: { invoiceId: string }) => boolean;
+      };
+      eventEmitter.emit(INVOICE_ACCEPTED_EVENT, { invoiceId: invoice.id });
     } else {
       try {
         await this.invoiceService.rejectInvoice(invoice.id);
