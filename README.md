@@ -2,7 +2,7 @@
 
 **"Can I prompt you?"** — Instant invoicing and M-Pesa collection for Kenya's
 informal manufacturers (jua kali), built for the Africa's Talking Open
-Hackathon (Manufacturing theme).
+Hackathon.
 
 A manufacturer finishes a job, dials a USSD code, and sends a payment request
 to their customer's phone by number. The customer gets an SMS, replies to
