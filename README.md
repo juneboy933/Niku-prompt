@@ -1,98 +1,182 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Niku-Prompt?
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+**"Can I prompt you?"** — Instant invoicing and M-Pesa collection for Kenya's
+informal manufacturers (jua kali), built for the Africa's Talking Open
+Hackathon (Manufacturing theme).
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+A manufacturer finishes a job, dials a USSD code, and sends a payment request
+to their customer's phone by number. The customer gets an SMS, replies to
+accept or reject, and — on accept — an M-Pesa STK push lands on their phone.
+Once paid, both sides get an SMS confirmation. No app, no smartphone required
+on either end.
 
-## Description
+## The problem
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+Jua kali manufacturers (welders, carpenters, fabricators) chase payment
+manually after finishing a job — no invoice, no record, no prompt forcing the
+transaction to close. This delays cash flow and leaves disputes unwinnable.
+Niku-Prompt? replaces that with a recorded, prompted, near-instant
+transaction using USSD, SMS, and M-Pesa STK Push.
 
-## Project setup
+## Architecture
 
-```bash
-$ npm install
+The core domain is modelled as four tables, each owning one concern:
+
+| Table | Owns | Lifecycle |
+|---|---|---|
+| **Manufacturer** | Registration — `phoneNumber` (from USSD session), `businessName` | Registered / not |
+| **Invoice** | The business-facing request | `CREATED → SENT → ACCEPTED/REJECTED/EXPIRED → PAYMENT_PENDING → SETTLED` |
+| **Transaction** | One row per STK attempt (an invoice can have several, e.g. after a retry) | `INITIATED → PUSHED → SUCCESS/FAILED/UNKNOWN` |
+| **Ledger** | Append-only, the source of truth for settlement | Written only when a Transaction reaches `SUCCESS` |
+
+**Ledger is truth.** `Invoice.status` only reaches `SETTLED` as a side effect
+of a Ledger write (`LedgerService.recordSettlement`), never set directly —
+that write, the Transaction update, and the Invoice update happen inside a
+single Prisma `$transaction` so they commit together or not at all.
+
+**Modules talk through events, not direct calls**, to avoid a circular
+dependency between the SMS and payment flows: `SmsService` emits
+`invoice.accepted` after a customer accepts by SMS reply; `PaymentsService`
+listens for that event and initiates the STK push. Neither module imports
+the other directly.
+
+```
+src/
+├── manufacturer/   registration, lookup
+├── invoice/        the state machine above, phone normalization, unique codes
+├── transaction/     STK attempt lifecycle
+├── ledger/          atomic settlement (Ledger → Transaction → Invoice)
+├── sms/             Africa's Talking SMS — outbound sends, inbound reply parsing
+├── ussd/            the USSD menu tree — registration + invoice creation
+├── payments/        Cradle Payment API integration (wraps M-Pesa STK Push)
+└── prisma/          PrismaService, Prisma 7 driver-adapter wiring
 ```
 
-## Compile and run the project
+### Why Cradle instead of raw Daraja
+
+The STK push and payment-status callback are handled through the
+[Cradle Payment API](https://payment.cradlevoices.com), which wraps M-Pesa,
+rather than calling Safaricom's Daraja API directly. `PaymentsService`
+listens for `invoice.accepted`, creates a `Transaction`, calls Cradle's
+`/process/` endpoint, and marks the transaction `PUSHED`. Cradle's callback
+(`POST /api/payments/cradle/invoice-callback`) resolves it to `SUCCESS` or
+`FAILED`, and on success calls `LedgerService.recordSettlement` — the same
+guarded, atomic path described above.
+
+`payments/` also contains a second, independent flow (`POST
+/api/payments/initiate`, its own `Payment` table, and the pages under
+`public/`) — a standalone Cradle payment demo not tied to the
+Manufacturer/Invoice flow, useful for testing the Cradle integration in
+isolation from USSD/SMS.
+
+## Setup
+
+**Requirements:** Node.js, Docker, an Africa's Talking sandbox account, and
+Cradle Payment API sandbox credentials.
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm install
+docker compose up -d          # Postgres + Redis
+npx prisma migrate dev        # creates tables from prisma/schema.prisma
+npm run start:dev
 ```
 
-## Run tests
+Copy `.env.example` to `.env` and fill in:
+
+```env
+DATABASE_URL=postgresql://prompt:dev_prompt_engine@localhost:5434/prompt_engine
+
+# Africa's Talking — sandbox username is always "sandbox"
+AT_USERNAME=sandbox
+AT_API_KEY=your_sandbox_api_key
+
+# Cradle Payment API
+CRADLE_PAYMENT_BASE_URL=https://payment.cradlevoices.com
+CRADLE_MERCHANT_ID=your_merchant_id
+CRADLE_PASSWORD=your_password
+CRADLE_CALLBACK_URL=https://<your-ngrok-domain>/api/payments/cradle/invoice-callback
+CRADLE_REDIRECT_URL=http://localhost:3000/payment/success
+CRADLE_CURRENCY=KES
+
+PORT=3000
+```
+
+`AT_USERNAME`/`AT_API_KEY` are missing from the committed `.env.example` —
+add them before anyone else clones this.
+
+To receive Africa's Talking's and Cradle's webhooks locally, expose your
+server with a tunnel:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+ngrok http 3000
 ```
 
-## Deployment
+Point AT's USSD channel and SMS callback, and Cradle's `callbackUrl`, at your
+ngrok URL.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Routes
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/ussd` | Africa's Talking USSD session callback |
+| `POST` | `/sms/inbound` | Africa's Talking inbound SMS callback (customer accept/reject) |
+| `POST` | `/api/payments/initiate` | Standalone Cradle payment demo (not tied to an Invoice) |
+| `GET` | `/api/payments/:invoiceNumber` | Status lookup for the standalone demo |
+| `POST` | `/api/payments/cradle/callback` | Cradle callback for the standalone demo |
+| `POST` | `/api/payments/cradle/invoice-callback` | Cradle callback for the real Invoice/Transaction/Ledger flow |
+| `GET` | `/payment/success` | Static success page |
+| `GET` | `/payment/receipt/:invoiceNumber` | Static receipt page |
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+## The USSD flow
+
+```
+Dial USSD code
+│
+├─ Unregistered
+│   Niku-Prompt?
+│   1. Register  2. Ask for payment
+│   ├─ 1 → Enter business name → registered
+│   └─ 2 → "Please register first"
+│
+└─ Registered
+    Niku-Prompt?
+    1. Ask for payment
+    └─ Enter customer number → Enter amount →
+       "Invoice for KES X. 1. Confirm  2. Cancel"
+       ├─ 1 → Invoice created, SMS sent to customer
+       └─ 2 → cancelled
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## Known limitations (sandbox testing)
 
-## Resources
+Africa's Talking's sandbox simulator has real constraints worth knowing
+before a live demo:
 
-Check out a few resources that may come in handy when working with NestJS:
+- **Safaricom numbers behave inconsistently in the sandbox** — SMS and USSD
+  simulation is most reliable with Airtel test numbers.
+- **The sandbox has no way to simulate an inbound SMS reply** — you can send
+  an outbound SMS and trigger USSD sessions, but there's no simulator path
+  for "customer replies 1234-1 by SMS." To test `POST /sms/inbound` and the
+  accept/reject flow end to end, call the endpoint directly (`curl`/Postman)
+  with a payload shaped like AT's real inbound webhook, rather than relying
+  on the simulator.
+- These are sandbox-only constraints — they don't reflect a bug in this
+  codebase, and a production AT account doesn't have them. Worth stating
+  plainly to judges if asked why a live SMS-reply demo isn't possible in the
+  sandbox.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## Suggested next steps
 
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- **Fix the phone-format mismatch** described above — normalize `from` in
+  `SmsService.handleInboundReply` the same way `Invoice.customerNumber` is
+  normalized, or the accept/reject guard silently drops legitimate replies.
+- **`InvoiceStatus.EXPIRED` is defined but never set.** Nothing currently
+  transitions a `SENT` invoice past its 24h `expiresAt`. A lazy check
+  (flip the status when `findInvoiceByCode` notices `expiresAt` has passed)
+  is the smallest fix; a scheduled job is the more correct one.
+- **`bullmq`/`ioredis`/`@nestjs/bullmq` are installed but unused** — they were
+  part of the original raw-Daraja polling design, superseded once Cradle's
+  callback model made polling unnecessary. Safe to remove before submission
+  if not needed elsewhere, to keep the dependency list honest.
+- **Add `AT_USERNAME`/`AT_API_KEY` to `.env.example`** — currently missing,
+  so a fresh clone can't run the SMS/USSD flow without guessing them.
